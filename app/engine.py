@@ -196,9 +196,14 @@ def edit_text(src: Path, dst: Path, page_index: int, old: str, new: str, span_bb
     if old_n == new_n:
         shutil.copyfile(src, dst)
         return {"ok": True, "mode": "noop", "degradations": []}
-    fid = _replace_fidelity(src, page_index, old_n, new_n, dst)
-    if fid and fid.get("ok"):
-        return fid
+    # 先按原文匹配（PDF 里往往是全角标点），再退回 NFKC 归一化后的写法
+    fid = None
+    for o, n in ((old, new), (old_n, new_n)):
+        if o == n:
+            continue
+        fid = _replace_fidelity(src, page_index, o, n, dst)
+        if fid and fid.get("ok"):
+            return fid
     fb = _replace_fallback(src, page_index, span_bbox, origin, new_n, size, colour, font_name, dst)
     if fid and not fid.get("ok"):
         fb["reason"] = fid.get("reason")
