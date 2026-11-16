@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>小陆工坊 · PDF 工作室</title>
+<link rel="stylesheet" href="style.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' fill='%23a8301f'/%3E%3Ctext x='32' y='44' font-size='34' text-anchor='middle' fill='%23f4efe4'%3E陆%3C/text%3E%3C/svg%3E">
+</head>
+<body>
+<header class="top">
+  <div class="brand"><span class="seal">陆</span><span class="name">小陆工坊</span><span class="sub">PDF 工作室</span></div>
+  <div class="acts">
+    <span id="status" class="status"></span>
+    <button id="btn-download" class="ghost" disabled>下载 PDF</button>
+    <button id="btn-reset" class="ghost" hidden>换一个文件</button>
+  </div>
+</header>
+
+<main id="empty" class="empty">
+  <div class="empty-inner">
+    <p class="kicker">EDIT · MERGE · SIGN</p>
+    <h1>把 PDF 里写错的字，直接改掉。</h1>
+    <p class="lede">能定位的中文用原字体原地改，定位不了就擦掉重写并提示。文件保留 3 小时，随时可下载。</p>
+    <label class="drop" id="drop">
+      <input type="file" id="file" accept="application/pdf" hidden>
+      <strong>选择 PDF</strong><span>或拖进来 · 最大 40 MB / 300 页</span>
+    </label>
+    <p class="tips">支持：改字、换字号颜色、删页、转页、旋转、合并、水印、页码。扫描件需先 OCR。</p>
+  </div>
+</main>
+
+<section id="workspace" class="workspace" hidden>
+  <aside class="rail">
+    <div class="rail-head"><span>页面</span><span id="page-count" class="count">0</span></div>
+    <div id="thumbs" class="thumbs"></div>
+  </aside>
+
+  <div class="stage">
+    <div class="stage-bar">
+      <button id="prev" class="mini">上一页</button>
+      <span id="pageno" class="pageno">1 / 1</span>
+      <button id="next" class="mini">下一页</button>
+      <span class="spacer"></span>
+      <button id="rotate" class="mini">旋转 90°</button>
+      <button id="delete" class="mini">删除本页</button>
+      <button id="watermark" class="mini">加水印</button>
+      <button id="numbers" class="mini">页码</button>
+    </div>
+    <div class="canvas-wrap" id="wrap">
+      <div class="sheet" id="sheet">
+        <img id="pageimg" alt="page">
+        <div id="overlay" class="overlay"></div>
+      </div>
+    </div>
+  </div>
+
+  <aside class="panel" id="panel">
+    <div class="panel-head"><span>选中文字</span><button id="clear" class="link" hidden>取消</button></div>
+    <p id="hint" class="hint">点页面上任意一段文字开始修改。</p>
+    <form id="editform" hidden>
+      <label>原文<textarea id="old" rows="2" readonly></textarea></label>
+      <label>改成<textarea id="new" rows="2" placeholder="输入新内容，回车换行会保留"></textarea></label>
+      <div class="row">
+        <label class="half">字号<input id="size" type="number" step="0.5" min="5" max="96"></label>
+        <label class="half">颜色<input id="color" type="color"></label>
+      </div>
+      <p class="meta" id="meta"></p>
+      <button type="submit" class="primary" id="apply">应用修改</button>
+    </form>
+    <div class="panel-foot">
+      <p>整份文件下载后即为最终版。</p>
+      <a href="#" id="dl2" hidden>下载</a>
+    </div>
+  </aside>
+</section>
+
+<div id="toast" class="toast" hidden></div>
+<script src="app.js"></script>
+</body>
+</html>
