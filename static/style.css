@@ -79,3 +79,6 @@ textarea[readonly]{background:#f0ebdf;color:var(--grey)}
 .sheet.erase-mode .overlay { pointer-events: none; }
 .marquee { position: absolute; border: 1px dashed #a8301f; background: rgba(168,48,31,.10); pointer-events: none; z-index: 5; }
 .mini.on { background: #14130f; color: #f4efe4; }
+
+.checkbox-line{display:flex;align-items:center;gap:8px;font-size:12.5px;color:#6c6558;margin:8px 0 2px}
+.checkbox-line input{width:14px;height:14px;accent-color:#a8301f}

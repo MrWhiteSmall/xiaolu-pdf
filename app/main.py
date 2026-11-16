@@ -170,6 +170,7 @@ class EditIn(BaseModel):
     color: list[float] = Field(default_factory=lambda: [0.08, 0.07, 0.06])
     font: str = ""
     restyle: bool = False
+    bold: bool = False
 
 
 @app.post("/api/{jid}/edit")
@@ -183,7 +184,7 @@ def edit(jid: str, body: EditIn) -> dict:
     size = min(400.0, max(1.0, float(body.size or 12)))
     result = engine.edit_text(src, dst, body.page, body.old, body.new,
                               body.bbox, tuple(body.origin), size,
-                              tuple(body.color[:3]), body.font, body.restyle)
+                              tuple(body.color[:3]), body.font, body.restyle, body.bold)
     if not result.get("ok"):
         dst.unlink(missing_ok=True)
         return {"ok": False, "reason": result.get("reason", "引擎无法处理这段文字")}

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import os
 import shutil
 import tempfile
@@ -11,6 +12,7 @@ from pathlib import Path
 from typing import Iterable
 
 import pymupdf
+from fontTools.ttLib import TTFont
 
 try:  # 可选依赖：装了就用保真引擎
     import pdf_edit_engine as pe
@@ -68,11 +70,11 @@ def subset_font(text: str, base: Path | None = None) -> Path | None:
         return base
 
 
-def _font_for(original: str) -> Path:
-    """按原字体名挑一个可用的中文字体（兜底模式用）。"""
+def _font_for(original: str, bold: bool = False) -> Path:
+    """按原字体名/字重挑一个可用的中文字体（兜底模式用）。"""
     low = (original or "").lower()
     # 目前只随包内置 Sans；宋/楷也先落到 Sans，页面上会提示“字体已替换”
-    return FONT_SANS_B if "bold" in low or "heavy" in low else FONT_SANS
+    return FONT_SANS_B if bold or "bold" in low or "heavy" in low or "black" in low else FONT_SANS
 
 
 @dataclass
@@ -84,17 +86,19 @@ class Span:
     font: str
     size: float
     color: tuple[float, float, float]
+    bold: bool = False
 
     def as_dict(self) -> dict:
         return {
             "id": self.id,
-            "text": normalise(self.text),
+            "text": self.text,
             "raw": self.text,
             "bbox": [round(v, 2) for v in self.bbox],
             "origin": [round(v, 2) for v in self.origin],
             "font": self.font,
             "size": round(self.size, 2),
             "color": [round(c, 3) for c in self.color],
+            "bold": self.bold,
         }
 
 
@@ -109,11 +113,81 @@ def page_size(path: str | Path, index: int) -> tuple[float, float]:
         return r.width, r.height
 
 
+
+def _embedded_weight(doc, xref: int) -> int | None:
+    """嵌入字体的字重（OS/2.usWeightClass）。很多 PPT 导出会把名字写成 Thin/Regular，只能靠字重判断。"""
+    try:
+        info = doc.extract_font(xref)
+        buf = info[3] if len(info) > 3 else None
+        if not buf:
+            return None
+        return int(TTFont(io.BytesIO(buf))["OS/2"].usWeightClass)
+    except Exception:
+        return None
+
+
+def _norm_font(name: str) -> str:
+    """字体名归一：去子集前缀、空格、连字符，只留字母数字。"""
+    base = str(name or "").split("+")[-1].lower()
+    return "".join(ch for ch in base if ch.isalnum())
+
+
+def _font_candidates(doc, page) -> dict[str, list[tuple[int, bytes]]]:
+    """归一化字体名 → [(字重, 字体程序)]。同名字体可能同时有 Regular/Bold 两份。"""
+    out: dict[str, list[tuple[int, bytes]]] = {}
+    try:
+        for f in page.get_fonts(full=True):
+            xref, basefont = f[0], f[3]
+            weight = _embedded_weight(doc, xref)
+            if not weight:
+                continue
+            try:
+                buf = doc.extract_font(xref)[3]
+            except Exception:
+                buf = b""
+            out.setdefault(_norm_font(basefont), []).append((weight, buf))
+    except Exception:
+        pass
+    return out
+
+
+def _font_weight_of(cands: dict[str, list[tuple[int, bytes]]], font_name: str,
+                    text: str, size: float, width: float) -> int:
+    key = _norm_font(font_name)
+    if not key:
+        return 0
+    items = cands.get(key) or []
+    if not items:
+        for name, group in cands.items():
+            if name.endswith(key) or key.endswith(name):
+                items = group
+                break
+    if not items:
+        return 0
+    if len({w for w, _ in items}) == 1:
+        return items[0][0]
+    # 同名字体多份：拿每份字体算这段字的宽度，谁最接近原 bbox 就是谁
+    best, best_err = 0, None
+    for weight, buf in items:
+        try:
+            fnt = pymupdf.Font(fontbuffer=buf) if buf else None
+            got = fnt.text_length(text, size) if fnt else None
+        except Exception:
+            got = None
+        if got is None:
+            continue
+        err = abs(got - width)
+        if best_err is None or err < best_err:
+            best, best_err = weight, err
+    return best
+
+
 def spans(path: str | Path, index: int) -> list[Span]:
     out: list[Span] = []
     with pymupdf.open(path) as doc:
         page = doc[index]
         d = page.get_text("dict")
+        cands = _font_candidates(doc, page)
         n = 0
         for block in d["blocks"]:
             for line in block.get("lines", []):
@@ -132,6 +206,10 @@ def spans(path: str | Path, index: int) -> list[Span]:
                         font=s.get("font", ""),
                         size=float(s.get("size", 10)),
                         color=rgb,
+                        bold=bool(int(s.get("flags", 0)) & 16)
+                              or any(k in s.get("font", "").lower() for k in ("bold", "heavy", "black"))
+                              or _font_weight_of(cands, s.get("font", ""), t,
+                                                 float(s.get("size", 10)), float(s["bbox"][2] - s["bbox"][0])) >= 600,
                     ))
     return out
 
@@ -199,14 +277,15 @@ def _replace_fidelity(src: Path, page_index: int, old: str, new: str, dst: Path)
 
 
 def _replace_fallback(src: Path, page_index: int, span_bbox: Iterable[float], origin: tuple[float, float],
-                      new: str, size: float, colour: tuple[float, float, float], orig_font: str, dst: Path) -> dict:
+                      new: str, size: float, colour: tuple[float, float, float], orig_font: str, dst: Path,
+                      bold: bool = False) -> dict:
     """擦除原字形（不填底色）后按原基线重写。"""
     with pymupdf.open(src) as doc:
         page = doc[page_index]
         rect = pymupdf.Rect(*span_bbox)
         page.add_redact_annot(rect, fill=None)
         page.apply_redactions(images=pymupdf.PDF_REDACT_IMAGE_NONE)
-        fpath = subset_font(new, _font_for(orig_font))
+        fpath = subset_font(new, _font_for(orig_font, bold))
         kwargs = {"fontsize": size, "color": colour}
         if fpath is not None:
             # 资源名必须随子集变化：固定叫 "zh" 会让 MuPDF 复用上一份子集，后改的字变方框
@@ -220,34 +299,35 @@ def _replace_fallback(src: Path, page_index: int, span_bbox: Iterable[float], or
 
 
 def edit_text(src: Path, dst: Path, page_index: int, old: str, new: str, span_bbox, origin,
-              size: float, colour, font_name: str, restyle: bool = False) -> dict:
+              size: float, colour, font_name: str, restyle: bool = False, bold: bool = False) -> dict:
     """先试保真引擎，失败或不可寻址则走擦除重写。
 
     restyle=True 表示只改字号/颜色：保真引擎不会动样式，直接走重写。
     """
     old_n, new_n = normalise(old), normalise(new)
-    if old_n == new_n and not restyle:
+    if old == new and not restyle:
         shutil.copyfile(src, dst)
         return {"ok": True, "mode": "noop", "degradations": []}
     if restyle:
-        fb = _replace_fallback(src, page_index, span_bbox, origin, new_n, size, colour, font_name, dst)
+        fb = _replace_fallback(src, page_index, span_bbox, origin, new, size, colour, font_name, dst, bold)
         fb["restyled"] = True
         return fb
     # 先按原文匹配（PDF 里往往是全角标点），再退回 NFKC 归一化后的写法。
     # 保真结果若把字号拉变了（短文本铺满原宽度），视为不可用，转兜底重写。
     fid = None
-    for o, n in ((old, new), (old_n, new_n)):
-        if o == n:
+    # 匹配可以用 NFKC 写法，但写回去的必须是你输入的原字符（全角逗号、空格都别动）
+    for match in (old, old_n):
+        if match == new:
             continue
-        fid = _replace_fidelity(src, page_index, o, n, dst)
+        fid = _replace_fidelity(src, page_index, match, new, dst)
         if fid and fid.get("ok"):
-            if not _fidelity_misfit(dst, page_index, n, float(size)):
+            if not _fidelity_misfit(dst, page_index, new, float(size)):
                 return fid
             Path(dst).unlink(missing_ok=True)
             fid = {"ok": False, "mode": "fidelity",
                    "reason": "字体被拉伸以铺满原宽度，已改用重写"}
             break
-    fb = _replace_fallback(src, page_index, span_bbox, origin, new_n, size, colour, font_name, dst)
+    fb = _replace_fallback(src, page_index, span_bbox, origin, new, size, colour, font_name, dst, bold)
     if fid and not fid.get("ok"):
         fb["reason"] = fid.get("reason")
     return fb

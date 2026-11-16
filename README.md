@@ -29,6 +29,12 @@
 1. **保真（fidelity）**：调用 [`pdf-edit-engine`](https://pypi.org/project/pdf-edit-engine/)，在原内容流里替换字形、按需扩展字体子集，字体与排版基本不变。要求 PDF 的文字有可用的 ToUnicode CMap。
 2. **兜底（fallback）**：先用 PyMuPDF 的 redaction 只抹掉字形（`fill=None`，不动背景），再用思源黑体（Noto Sans SC）子集重写。字体不可避免会被替换，接口会返回 `degradations: ["font_substituted"]`。
 
+重写时会尽量保住原样式：
+
+- **字重**：从嵌入字体读 `OS/2.usWeightClass`；同名字体有多份时用「这段字在原字号下的宽度」反推是哪一份；判断不出时手动勾「粗体」
+- **标点与空格**：NFKC 只用于「匹配原文」，写回始终用你输入的原文——全角逗号、全角空格、不间断空格不会被换成半角
+- 仍不保证：字间距/字偶距（tracking、kerning）、行内混排的复杂版式
+
 **已知边界**（实测 10 份真实 PDF：7 份可保真、3 份只能兜底）：
 
 - PowerPoint 导出的 PDF、部分扫描件没有 ToUnicode，无法定位文字 → 走兜底

@@ -125,11 +125,12 @@ function select(sp, el) {
   $("#hint").hidden = true;
   $("#editform").hidden = false;
   $("#clear").hidden = false;
-  $("#old").value = sp.text;
-  $("#new").value = sp.text;
+  $("#old").value = sp.raw ?? sp.text;
+  $("#new").value = sp.raw ?? sp.text;
   $("#size").value = Number(sp.size.toFixed(2));
   $("#color").value = rgb2hex(sp.color);
-  $("#meta").textContent = `${sp.font || "未知字体"} · ${sp.size}pt · 第 ${state.page + 1} 页`;
+  $("#bold").checked = !!sp.bold;
+  $("#meta").textContent = `${sp.font || "未知字体"}${sp.bold ? " · 粗体" : ""} · ${sp.size}pt · 第 ${state.page + 1} 页`;
   $("#new").focus();
   $("#new").select();
 }
@@ -152,7 +153,7 @@ $("#editform").onsubmit = async (e) => {
   const body = {
     page: state.page, old: sp.raw ?? sp.text, new: $("#new").value,
     bbox: sp.bbox, origin: sp.origin, size: Number($("#size").value) || sp.size,
-    color: hex2rgb($("#color").value), font: sp.font,
+    color: hex2rgb($("#color").value), font: sp.font, bold: $("#bold").checked,
   };
   if (!body.new.trim()) return toast("新内容不能为空", true);
   const sameText = body.new === (sp.raw ?? sp.text);
