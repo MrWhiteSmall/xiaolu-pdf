@@ -74,3 +74,8 @@ textarea[readonly]{background:#f0ebdf;color:var(--grey)}
 }
 
 .debug .span { outline: 1px solid rgba(168,48,31,.55); background: rgba(168,48,31,.05); }
+
+.sheet.erase-mode { cursor: crosshair; }
+.sheet.erase-mode .overlay { pointer-events: none; }
+.marquee { position: absolute; border: 1px dashed #a8301f; background: rgba(168,48,31,.10); pointer-events: none; z-index: 5; }
+.mini.on { background: #14130f; color: #f4efe4; }

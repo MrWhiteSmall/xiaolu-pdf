@@ -142,6 +142,32 @@ def render_page(path: str | Path, index: int, dpi: int = 110) -> bytes:
         return pix.tobytes("png")
 
 
+def _text_width(fp: Path | None, text: str, size: float) -> float:
+    """估算一段文字在给定字号下的宽度，用于判断是否溢出原位置。"""
+    try:
+        fnt = pymupdf.Font(fontfile=str(fp)) if fp else pymupdf.Font("helv")
+        return float(fnt.text_length(text, size))
+    except Exception:
+        return 0.0
+
+
+def _fidelity_misfit(dst: Path, page_index: int, new: str, size: float) -> bool:
+    """保真引擎为了铺满原宽度会缩放字形；字号明显变了就说明被拉伸，判为不合格。"""
+    want = normalise(new).strip()
+    if not want:
+        return True
+    try:
+        with pymupdf.open(dst) as doc:
+            for block in doc[page_index].get_text("dict")["blocks"]:
+                for line in block.get("lines", []):
+                    for span in line["spans"]:
+                        if normalise(span["text"]).strip() == want:
+                            return abs(span["size"] - size) > max(0.6, size * 0.08)
+    except Exception:
+        return False
+    return False
+
+
 def _replace_fidelity(src: Path, page_index: int, old: str, new: str, dst: Path) -> dict | None:
     """原地改字。返回 None 表示这个文件/这段文字引擎办不了。"""
     if pe is None:
@@ -153,7 +179,8 @@ def _replace_fidelity(src: Path, page_index: int, old: str, new: str, dst: Path)
     if not matches:
         return None
     try:
-        res = pe.replace(str(src), matches[0], new, output_path=str(dst), reflow=True)
+        # 不做段落重排：重排会按原宽度伸缩字形，短文本会被拉长、长文本会挤位
+        res = pe.replace(str(src), matches[0], new, output_path=str(dst), reflow=False)
     except Exception as exc:  # 引擎在不可寻址字体上会抛错
         return {"ok": False, "mode": "fidelity", "reason": f"{type(exc).__name__}: {exc}"[:200]}
     rep = res.fidelity_report
@@ -172,42 +199,71 @@ def _replace_fidelity(src: Path, page_index: int, old: str, new: str, dst: Path)
 
 
 def _replace_fallback(src: Path, page_index: int, span_bbox: Iterable[float], origin: tuple[float, float],
-                      new: str, size: float, colour: tuple[float, float, float], font_name: str, dst: Path) -> dict:
+                      new: str, size: float, colour: tuple[float, float, float], orig_font: str, dst: Path) -> dict:
     """擦除原字形（不填底色）后按原基线重写。"""
     with pymupdf.open(src) as doc:
         page = doc[page_index]
         rect = pymupdf.Rect(*span_bbox)
         page.add_redact_annot(rect, fill=None)
         page.apply_redactions(images=pymupdf.PDF_REDACT_IMAGE_NONE)
-        fpath = subset_font(new, _font_for(font_name))
+        fpath = subset_font(new, _font_for(orig_font))
         kwargs = {"fontsize": size, "color": colour}
         if fpath is not None:
-            kwargs.update(fontfile=str(fpath), fontname="zh")
+            # 资源名必须随子集变化：固定叫 "zh" 会让 MuPDF 复用上一份子集，后改的字变方框
+            kwargs.update(fontfile=str(fpath), fontname=font_name(fpath))
         page.insert_text(origin, new, **kwargs)
+        width = _text_width(fpath, new, size)
         doc.save(dst, garbage=3, deflate=True)
-    return {"ok": True, "mode": "fallback", "font": fpath.stem, "overflow": False,
+    return {"ok": True, "mode": "fallback", "font": fpath.stem if fpath else None,
+            "overflow": bool(width and width > rect.width + 1.5),
             "reflow": False, "degradations": ["font_substituted"]}
 
 
 def edit_text(src: Path, dst: Path, page_index: int, old: str, new: str, span_bbox, origin,
-              size: float, colour, font_name: str) -> dict:
-    """先试保真引擎，失败或不可寻址则走擦除重写。"""
+              size: float, colour, font_name: str, restyle: bool = False) -> dict:
+    """先试保真引擎，失败或不可寻址则走擦除重写。
+
+    restyle=True 表示只改字号/颜色：保真引擎不会动样式，直接走重写。
+    """
     old_n, new_n = normalise(old), normalise(new)
-    if old_n == new_n:
+    if old_n == new_n and not restyle:
         shutil.copyfile(src, dst)
         return {"ok": True, "mode": "noop", "degradations": []}
-    # 先按原文匹配（PDF 里往往是全角标点），再退回 NFKC 归一化后的写法
+    if restyle:
+        fb = _replace_fallback(src, page_index, span_bbox, origin, new_n, size, colour, font_name, dst)
+        fb["restyled"] = True
+        return fb
+    # 先按原文匹配（PDF 里往往是全角标点），再退回 NFKC 归一化后的写法。
+    # 保真结果若把字号拉变了（短文本铺满原宽度），视为不可用，转兜底重写。
     fid = None
     for o, n in ((old, new), (old_n, new_n)):
         if o == n:
             continue
         fid = _replace_fidelity(src, page_index, o, n, dst)
         if fid and fid.get("ok"):
-            return fid
+            if not _fidelity_misfit(dst, page_index, n, float(size)):
+                return fid
+            Path(dst).unlink(missing_ok=True)
+            fid = {"ok": False, "mode": "fidelity",
+                   "reason": "字体被拉伸以铺满原宽度，已改用重写"}
+            break
     fb = _replace_fallback(src, page_index, span_bbox, origin, new_n, size, colour, font_name, dst)
     if fid and not fid.get("ok"):
         fb["reason"] = fid.get("reason")
     return fb
+
+
+def erase_region(path: Path, page_index: int, rect: Iterable[float]) -> dict:
+    """把框选区域里的文字/线条/图片擦掉，不填底色（保留纸张与底纹）。"""
+    with pymupdf.open(path) as doc:
+        page = doc[page_index]
+        area = pymupdf.Rect(*rect)
+        page.add_redact_annot(area, fill=None, cross_out=False)
+        page.apply_redactions(images=pymupdf.PDF_REDACT_IMAGE_REMOVE,
+                              graphics=pymupdf.PDF_REDACT_LINE_ART_REMOVE_IF_COVERED,
+                              text=pymupdf.PDF_REDACT_TEXT_REMOVE)
+        _save(doc, path)
+    return {"ok": True, "mode": "erase", "area": [round(v, 1) for v in area]}
 
 
 # ---------------- 页面操作 ----------------

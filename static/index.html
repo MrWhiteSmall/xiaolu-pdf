@@ -11,11 +11,21 @@
 <header class="top">
   <div class="brand"><span class="seal">陆</span><span class="name">小陆工坊</span><span class="sub">PDF 工作室</span></div>
   <div class="acts">
+    <span id="quota" class="status" hidden></span>
     <span id="status" class="status"></span>
     <button id="btn-download" class="ghost" disabled>下载 PDF</button>
     <button id="btn-reset" class="ghost" hidden>换一个文件</button>
   </div>
 </header>
+
+<main id="gate" class="empty" hidden>
+  <div class="empty-inner">
+    <p class="kicker">PRIVATE LINK</p>
+    <h1>请用小陆工坊发的专属链接打开。</h1>
+    <p class="lede">链接里带着你这单的页数额度，一次生成一条；额度不够可以找管理员续充。</p>
+    <p class="tips">如果你手上只有这个地址，说明还没拿到链接——回闲鱼订单里找我补发。</p>
+  </div>
+</main>
 
 <main id="empty" class="empty">
   <div class="empty-inner">
@@ -44,13 +54,16 @@
       <span class="spacer"></span>
       <button id="rotate" class="mini">旋转 90°</button>
       <button id="delete" class="mini">删除本页</button>
+      <button id="erase" class="mini">框选删除</button>
       <button id="watermark" class="mini">加水印</button>
+      <button id="unwatermark" class="mini" hidden>撤销水印</button>
       <button id="numbers" class="mini">页码</button>
     </div>
     <div class="canvas-wrap" id="wrap">
       <div class="sheet" id="sheet">
         <img id="pageimg" alt="page">
         <div id="overlay" class="overlay"></div>
+        <div id="marquee" class="marquee" hidden></div>
       </div>
     </div>
   </div>
@@ -62,7 +75,7 @@
       <label>原文<textarea id="old" rows="2" readonly></textarea></label>
       <label>改成<textarea id="new" rows="2" placeholder="输入新内容，回车换行会保留"></textarea></label>
       <div class="row">
-        <label class="half">字号<input id="size" type="number" step="0.5" min="5" max="96"></label>
+        <label class="half">字号<input id="size" type="number" step="any" min="1" max="400" inputmode="decimal"></label>
         <label class="half">颜色<input id="color" type="color"></label>
       </div>
       <p class="meta" id="meta"></p>
